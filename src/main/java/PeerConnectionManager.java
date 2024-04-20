@@ -1,6 +1,8 @@
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.net.InetAddress;
@@ -10,7 +12,7 @@ import java.net.UnknownHostException;
 import java.util.*;
 
 public class PeerConnectionManager {
-    public final Map<String, PeerConnection> activePeerConnections;
+    private final Map<String, PeerConnection> activePeerConnections;
     public static final int LISTEN_PORT = 80;
 
     public PeerConnectionManager() throws UnknownHostException {
@@ -66,19 +68,21 @@ public class PeerConnectionManager {
                 peerConnection.startReceivingMessages();
 
                 // tell about new one to others
-                Gson gson = new Gson();
-                Set<String> newIp = Collections.singleton(peerConnection.getIp());
-                String stringSetOfNewIp = gson.toJson(newIp);
-                Message msg = new Message(MessageType.DISCOVERY, stringSetOfNewIp);
-                String jsonMsg = gson.toJson(msg);
-                activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(jsonMsg));
+                activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(convertToJson(MessageType.DISCOVERY, setToString(Collections.singleton(peerConnection.getIp())))));
+//                Gson gson = new Gson();
+//                Set<String> newIp = Collections.singleton(peerConnection.getIp());
+//                String stringSetOfNewIp = gson.toJson(newIp);
+//                Message msg = new Message(MessageType.DISCOVERY, stringSetOfNewIp);
+//                String jsonMsg = gson.toJson(msg);
+//                activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(jsonMsg));
 
                 // tell new one about others
-                Set<String> ips = getIps();
-                String stringSet = gson.toJson(ips);
-                Message message = new Message(MessageType.DISCOVERY, stringSet);
-                String jsonMessage = gson.toJson(message);
-                peerConnection.sendMessage(jsonMessage);
+                peerConnection.sendMessage(convertToJson(MessageType.DISCOVERY, setToString(getIps())));
+//                Set<String> ips = getIps();
+//                String stringSet = gson.toJson(ips);
+//                Message message = new Message(MessageType.DISCOVERY, stringSet);
+//                String jsonMessage = gson.toJson(message);
+//                peerConnection.sendMessage(jsonMessage);
 
             }
 
@@ -93,18 +97,33 @@ public class PeerConnectionManager {
         while (true) {
             System.out.println("Please enter message that you want to send: ");
             String text = scanner.nextLine();
+
+            String encryptedText = AES.encrypt(text, AES.symmetricKey, AES.iv);
+
             System.out.println("I know these guys: ");
             for (Map.Entry<String, PeerConnection> entry: activePeerConnections.entrySet()) {
                 System.out.println(entry.getValue().getIp());
             }
-            Message message = new Message(MessageType.REGULAR, text);
-            String messageJson = new Gson().toJson(message);
-            activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(messageJson));
+            if (activePeerConnections.isEmpty()) System.out.println("You are alone in the network!");
+            else {
+                activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(convertToJson(MessageType.REGULAR, encryptedText)));
+            }
             System.out.println("Message was sent.");
         }
     }
 
-    private Set<String> getIps() {
+    public Set<String> getIps() {
         return activePeerConnections.keySet();
+    }
+
+    private String convertToJson(MessageType type, String msg) {
+        Gson gson = new Gson();
+        Message message = new Message(type, msg);
+        return gson.toJson(message);
+    }
+
+    private String setToString(Set<String> set) {
+        Gson gson = new Gson();
+        return gson.toJson(set);
     }
 }
