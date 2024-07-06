@@ -1,10 +1,10 @@
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
+import javax.crypto.SecretKey;
 import java.io.*;
 import java.lang.reflect.Type;
+import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.util.Set;
@@ -17,6 +17,7 @@ public class PeerConnection {
     // writing data to connected peer
     private BufferedWriter output;
     private final PeerConnectionManager connectionManager;
+    private SecretKey symmetricKey;
     public PeerConnection(Socket connection, PeerConnectionManager connectionManager) {
         this.connection = connection;
         this.connectionManager = connectionManager;
@@ -50,6 +51,31 @@ public class PeerConnection {
         return ip;
     }
 
+    public void setSymmetricKey(BigInteger sharedSecret) {
+        symmetricKey = AES.generateKey(sharedSecret);
+    }
+
+    public SecretKey getSymmetricKey() {
+        return symmetricKey;
+    }
+
+    public void establishSharedSecret() throws IOException {
+        // Generate and send DH public key
+        String publicKey = DH.getPublicKey().toString();
+        String jsonMessage = Util.messageToJson(MessageType.KEY_ESTABLISHMENT, publicKey);
+        sendMessage(jsonMessage);
+
+        // Receive and handle peer's DH public key
+        String receivedJsonMessage = input.readLine();
+        Message receivedMessage = Util.jsonToMessage(receivedJsonMessage);
+        BigInteger otherPublicKey = new BigInteger(receivedMessage.getBody());
+        BigInteger sharedSecret = DH.getSharedSecret(otherPublicKey);
+        setSymmetricKey(sharedSecret);
+
+        System.out.println("Symmetric key established with " + getIp());
+    }
+
+
     private class MessageReceiver implements Runnable {
         // TODO identify protocol that the message ends, i.e. with a new line
         @Override
@@ -59,14 +85,20 @@ public class PeerConnection {
                 while ((str = input.readLine()) != null) {
                     System.out.println("Received message: \n" + str);
 
-                    Gson gson = new Gson();
-                    Message receivedMessage = gson.fromJson(str, Message.class);
+                    // It is an encrypted message
+                    String decryptedText;
+                    try {
+                        decryptedText = AES.decrypt(str, symmetricKey);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Decryption problems");
+                    }
+
+                    Message receivedMessage = Util.jsonToMessage(decryptedText);
                     MessageType type = receivedMessage.getHeader();
 
                     if (type == MessageType.DISCOVERY) {
-                        Type setType = new TypeToken<Set<String>>(){}.getType();
-                        Set<String> possibleNewIps = gson.fromJson(receivedMessage.getBody(), setType);
-                        for (String newIp: possibleNewIps) {
+                        Set<String> possibleNewIps = Util.stringToSet(receivedMessage.getBody());
+                        for (String newIp : possibleNewIps) {
                             if (!connectionManager.getIps().contains(newIp) && !newIp.equals(InetAddress.getLocalHost().getHostAddress())) {
                                 System.out.println("I have a new friend: " + newIp);
                                 PeerConnection peerConnection = new PeerConnection(new Socket(newIp, PeerConnectionManager.LISTEN_PORT), connectionManager);
@@ -75,12 +107,7 @@ public class PeerConnection {
                             }
                         }
                     } else {
-                        try {
-                            String decryptedText = AES.decrypt(receivedMessage.getBody(), AES.symmetricKey, AES.iv);
-                            System.out.println("Decrypted message: \n" + decryptedText);
-                        } catch (Exception e) {
-                            System.out.println("Something wrong with decryption");
-                        }
+                        System.out.println("Regular message: "  + receivedMessage.getBody());
                     }
                 }
             } catch (IOException e) {
