@@ -5,11 +5,16 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class PeerConnectionManager {
 
     private final Map<String, PeerConnection> activePeerConnections;
     public static final int LISTEN_PORT = 80;
+    private static final String BROADCASTER_IP = "172.17.0.2";
+
+    private final ExecutorService connectionHandlingExecutor = Executors.newCachedThreadPool();
 
     public PeerConnectionManager() throws UnknownHostException {
         activePeerConnections = new ConcurrentHashMap<>();
@@ -22,12 +27,13 @@ public class PeerConnectionManager {
         new Thread(this::listenForInputFromKeyboard).start();
 
         try {
-            if (!InetAddress.getLocalHost().getHostAddress().equals("172.17.0.2")) {
+            if (!InetAddress.getLocalHost().getHostAddress().equals(BROADCASTER_IP)) {
                 System.out.println("I am not a broadcaster.");
-                PeerConnection peerConnection = new PeerConnection(new Socket("172.17.0.2", LISTEN_PORT), this);
-                addPeerConnection(peerConnection);
+                PeerConnection peerConnection = new PeerConnection(new Socket(BROADCASTER_IP, LISTEN_PORT), this);
 
+                // can be moved to separate thread, but it is not necessary
                 peerConnection.establishSharedSecret();
+                addPeerConnection(peerConnection);
             } else {
                 System.out.println("I am a broadcaster.");
             }
@@ -54,20 +60,21 @@ public class PeerConnectionManager {
                 // do not use try-with-resources; socket should not be closed
                 Socket requestedConnection = serverSocket.accept();
                 System.out.println("Accepted connection from: " + requestedConnection.getInetAddress().getHostAddress());
+
                 if (activePeerConnections.containsKey(requestedConnection.getInetAddress().getHostAddress())) continue;
+
                 PeerConnection peerConnection = new PeerConnection(requestedConnection, this);
-                addPeerConnection(peerConnection);
-                // Start key establishment in a separate thread
 
-                // Establish shared secret with the new peer
-                peerConnection.establishSharedSecret();
-                // After key establishment, start receiving messages
-//                    peerConnection.startReceivingMessages();
-                // Notify others about the new peer
-                notifyPeersAboutNewPeer(peerConnection);
-
-                // Notify the new peer about existing peers
-                notifyNewPeerAboutExistingPeers(peerConnection);
+                connectionHandlingExecutor.submit(() -> {
+                    // Establish shared secret with the new peer
+                    peerConnection.establishSharedSecret();
+                    // Notify others about the new peer
+                    notifyPeersAboutNewPeer(peerConnection);
+                    // Notify the new peer about existing peers
+                    notifyNewPeerAboutExistingPeers(peerConnection);
+                    // Add new peer
+                    addPeerConnection(peerConnection);
+                });
             }
 
         } catch (IOException e) {
@@ -102,6 +109,7 @@ public class PeerConnectionManager {
             for (Map.Entry<String, PeerConnection> entry: activePeerConnections.entrySet()) {
                 System.out.println(entry.getValue().getIp());
             }
+
             if (activePeerConnections.isEmpty()) System.out.println("You are alone in the network!");
             else {
                 activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(AES.encrypt(jsonMessage, e.getSymmetricKey())));

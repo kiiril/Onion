@@ -1,9 +1,5 @@
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-
 import javax.crypto.SecretKey;
 import java.io.*;
-import java.lang.reflect.Type;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -11,16 +7,20 @@ import java.util.Set;
 import java.util.concurrent.*;
 
 public class PeerConnection {
+    // maybe can be removed
     private String ip;
     private final Socket connection;
+
     // reading data from connected peer
-    private volatile BufferedReader input;
+    private BufferedReader input;
     // writing data to connected peer
     private BufferedWriter output;
     private final PeerConnectionManager connectionManager;
     private SecretKey symmetricKey;
 
-    private final ExecutorService receiverService = Executors.newFixedThreadPool(5);
+    // FIXME technically if send messages at the same time from more than 5 peers it will not receive all of them (for fixed thread pool)
+    private final ExecutorService receiverService = Executors.newCachedThreadPool();
+    private final ExecutorService connectionHandlingExecutor = Executors.newCachedThreadPool();
 
     public PeerConnection(Socket connection, PeerConnectionManager connectionManager) {
         this.connection = connection;
@@ -66,7 +66,8 @@ public class PeerConnection {
 
     public void establishSharedSecret() {
         System.out.println("Start establishing shared secret with " + getIp());
-        // Generate and send DH public key
+
+        // Send my DH public key
         String publicKey = DH.getPublicKey().toString();
         String jsonMessage = Util.messageToJson(MessageType.KEY_ESTABLISHMENT, publicKey);
         sendMessage(jsonMessage);
@@ -77,14 +78,16 @@ public class PeerConnection {
         try {
             receivedJsonMessage = input.readLine();
         } catch (IOException e) {
-            System.out.println("Cannot receive the message from input stream during key establishment" + e);
+            System.out.println("Cannot receive the public key from another peer during key establishment" + e);
+            return;
         }
 
         Message receivedMessage = Util.jsonToMessage(receivedJsonMessage);
-        System.out.println("Received other public key: " + receivedMessage.getBody());
+        System.out.println("Received another peer's public key: " + receivedMessage.getBody());
 
         if (receivedMessage.getHeader() != MessageType.KEY_ESTABLISHMENT) {
             System.out.println("Unexpected message type during key establishment");
+            return;
         }
 
         BigInteger otherPublicKey = new BigInteger(receivedMessage.getBody());
@@ -107,11 +110,11 @@ public class PeerConnection {
                 while ((str = input.readLine()) != null) {
                     System.out.println("Received message: \n" + str);
 
-                    // It is an encrypted message
+                    // Message is encrypted
                     String decryptedText;
                     try {
                         decryptedText = AES.decrypt(str, symmetricKey);
-                    } catch (Exception e) {
+                    } catch (Exception e) { // fixme catch exceptions inside the decrypt method
                         throw new RuntimeException("Decryption problems");
                     }
 
@@ -121,21 +124,28 @@ public class PeerConnection {
 
                     if (type == MessageType.DISCOVERY) {
                         Set<String> possibleNewIps = Util.stringToSet(receivedMessage.getBody());
-                        System.out.println("Possible new peers: " + possibleNewIps);
+                        System.out.println("New possible peers: " + possibleNewIps);
+
                         for (String newIp : possibleNewIps) {
                             if (!connectionManager.getIps().contains(newIp) && !newIp.equals(InetAddress.getLocalHost().getHostAddress())) {
-                                System.out.println("I have a new friend: " + newIp);
+                                System.out.println("I have a new peer: " + newIp);
                                 try {
                                     PeerConnection peerConnection = new PeerConnection(new Socket(newIp, PeerConnectionManager.LISTEN_PORT), connectionManager);
-                                    connectionManager.addPeerConnection(peerConnection);
-                                    peerConnection.establishSharedSecret(); // FIXME: I think something is broken here
+
+                                    connectionHandlingExecutor.submit(() ->{
+                                            peerConnection.establishSharedSecret();
+                                            connectionManager.addPeerConnection(peerConnection); // mb fine, mb no, I do not know :)
+                                    }); // we want to receive messages from peer and not be blocked while establishing secret with other peers
+
                                 } catch (IOException e) {
                                     System.out.println("Cannot create a Socket for a new peer" + e);
                                 }
                             }
                         }
-                    } else {
+                    } else if (type == MessageType.REGULAR) {
                         System.out.println("Regular message: "  + receivedMessage.getBody());
+                    } else {
+                        System.out.println("Unexpected message type");
                     }
                 }
             } catch (IOException e) {
