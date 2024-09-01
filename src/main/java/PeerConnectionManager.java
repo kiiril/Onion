@@ -1,3 +1,6 @@
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import javax.crypto.SecretKey;
 import javax.net.ssl.HttpsURLConnection;
 import java.io.IOException;
@@ -8,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class PeerConnectionManager {
+    private static final Logger logger = LogManager.getLogger();
 
     private final Map<String, PeerConnection> activePeerConnections;
     public static final int LISTEN_PORT = 80;
@@ -20,9 +24,9 @@ public class PeerConnectionManager {
 
     public PeerConnectionManager() throws UnknownHostException {
         activePeerConnections = new ConcurrentHashMap<>();
-        System.out.println(InetAddress.getLocalHost().getHostAddress());
+        logger.info("My ip address is: {}", InetAddress.getLocalHost().getHostAddress());
         DH.generatePublicKey();
-        System.out.println("DH public key is generated");
+        logger.info("DH public key is generated");
 
         // THIS IS THE FIX OF THE DAY....
         new Thread(this::listenForConnections).start();
@@ -30,14 +34,14 @@ public class PeerConnectionManager {
 
         try {
             if (!InetAddress.getLocalHost().getHostAddress().equals(BROADCASTER_IP)) {
-                System.out.println("I am not a broadcaster.");
+                logger.info("I am not a broadcaster");
                 PeerConnection peerConnection = new PeerConnection(new Socket(BROADCASTER_IP, LISTEN_PORT), this);
 
                 // can be moved to separate thread, but it is not necessary
                 peerConnection.establishSharedSecret();
                 addPeerConnection(peerConnection);
             } else {
-                System.out.println("I am a broadcaster.");
+                logger.info("I am a broadcaster");
             }
         } catch (IOException e) {
             System.out.println("Cannot create a Socket for broadcaster" + e);
@@ -46,10 +50,9 @@ public class PeerConnectionManager {
 
     public void addPeerConnection(PeerConnection peerConnection) {
         // logic about id can be changed
-        System.out.println("Add peer connection: " + peerConnection.getIp());
         String peerId = peerConnection.getIp();
         activePeerConnections.putIfAbsent(peerId, peerConnection);
-        System.out.println("Active peers: " + activePeerConnections);
+        logger.info("Added active peer connection: {}", peerConnection.getIp());
     }
 
     private void removePeerConnection(String peerId) {
@@ -57,7 +60,7 @@ public class PeerConnectionManager {
     }
 
     public void createSessionWithKey(int sessionId, SecretKey sessionKey) {
-        System.out.println("Add session key in PeerConnectionManager for session " + sessionId + "with key: " + sessionKey);
+        logger.info("Creating session with session id={} and session key={}", sessionId, sessionKey.toString());
         Session session = new Session(sessionId);
         session.setMySessionKey(sessionKey);
         sessions.add(session);
@@ -65,16 +68,17 @@ public class PeerConnectionManager {
 
     public Session getSession(int sessionId) {
         Session session = sessions.stream().filter(s -> s.getSessionId() == sessionId).findFirst().orElse(null);
-        System.out.println("Get session key in PeerConnectionManager for session " + sessionId + "with key: " + session.getMySessionKey());
+        logger.info("Get session with session id={}", sessionId);
         return session;
     }
 
     public void listenForConnections() {
+        logger.info("Starting to listen for connections...");
         try (ServerSocket serverSocket = new ServerSocket(LISTEN_PORT)) {
             while (true) {
                 // do not use try-with-resources; socket should not be closed
                 Socket requestedConnection = serverSocket.accept();
-                System.out.println("Accepted connection from: " + requestedConnection.getInetAddress().getHostAddress());
+                logger.info("Accepted connection from: {}", requestedConnection.getInetAddress().getHostAddress());
 
                 if (activePeerConnections.containsKey(requestedConnection.getInetAddress().getHostAddress())) continue;
 
@@ -99,21 +103,23 @@ public class PeerConnectionManager {
 
     // Notify all peers about a new peer
     private void notifyPeersAboutNewPeer(PeerConnection newPeerConnection) {
-        System.out.println("Notifying peers about a new peer: " + newPeerConnection.getIp());
+        logger.info("Notifying other peers about a new peer: {}", newPeerConnection.getIp());
         DiscoveryMessage message = new DiscoveryMessage(Util.setToString(Collections.singleton(newPeerConnection.getIp())));
         String jsonMessage = Util.messageToJson(message);
         activePeerConnections.values().parallelStream().forEach(e -> e.sendMessage(AES.encrypt(jsonMessage, e.getSymmetricKey())));
     }
 
-    // Notify a new peer about existing peers
+    // Notify new peer about existing peers
     private void notifyNewPeerAboutExistingPeers(PeerConnection newPeerConnection) {
-        System.out.println("Notifying a new peer about existing peers: " + getIps());
+        logger.info("Notifying new peer about existing peers: {}", getIps());
         DiscoveryMessage message = new DiscoveryMessage(Util.setToString(getIps()));
         String jsonMessage = Util.messageToJson(message);
         newPeerConnection.sendMessage(AES.encrypt(jsonMessage, newPeerConnection.getSymmetricKey()));
     }
 
     public void listenForInputFromKeyboard() {
+        logger.info("Starting to listen for input from keyboard...");
+
         System.out.println("You can use a console to send messages to other peers.");
         Scanner scanner = new Scanner(System.in);
         while (true) {
@@ -121,26 +127,24 @@ public class PeerConnectionManager {
             String text = scanner.nextLine();
 
             PeerConnection[] selectedPeers = selectPeers(); // 2 peers
-            System.out.println("Selected peers: " + Arrays.toString(selectedPeers));
+            logger.info("Selected peers: {}", Arrays.toString(Arrays.stream(selectedPeers).map(PeerConnection::getIp).toArray()));
 
             int sessionId = (int) (Math.random() * Integer.MAX_VALUE); // fixme uniqueness?
             Session session = new Session(sessionId);
             session.setSelectedPeers(selectedPeers);
             sessions.add(session);
+            logger.info("Created a session as sender with session id={}", sessionId);
 
             String encryptedJson = session.encryptWithLayers(text);
 
-            System.out.println("I know these guys: ");
-            for (Map.Entry<String, PeerConnection> entry: activePeerConnections.entrySet()) {
-                System.out.println(entry.getValue().getIp());
-            }
+            logger.info("I know these peers: {}", Arrays.toString(activePeerConnections.values().stream().map(PeerConnection::getIp).toArray()));
 
-            if (activePeerConnections.isEmpty()) System.out.println("You are alone in the network!");
+            if (activePeerConnections.isEmpty()) logger.info("No active peers to send message to");
             else {
                 PeerConnection firstPeer = selectedPeers[0];
                 // No need for additional encryption here, as it's already done in the loop
                 firstPeer.sendMessage(AES.encrypt(Util.messageToJson(new ForwardMessage(session.getSessionId(), encryptedJson)), firstPeer.getSymmetricKey()));
-                System.out.println("Message was sent.");
+                logger.info("Sent message to the first peer in the chain: {}", firstPeer.getIp());
             }
         }
     }
@@ -165,13 +169,13 @@ public class PeerConnectionManager {
                 scanner.close();
                 return response.toString();
             } else {
-                System.out.println("Cannot get response from URL: " + stringUrl);
+                logger.info("Cannot get response from URL: {}", stringUrl);
                 return "";
             }
         } catch (MalformedURLException e) {
-            System.out.println("Cannot create URL from string: " + stringUrl + e);
+            logger.warn("Cannot create URL from string: {} (error={})", stringUrl, e);
         } catch (IOException e) {
-            System.out.println("Cannot open connection to URL: " + stringUrl + e);
+            logger.warn("Cannot open connection to URL: {} (error={})", stringUrl, e);
         }
         return "";
     }
@@ -180,6 +184,7 @@ public class PeerConnectionManager {
 
     private PeerConnection[] selectPeers() {
         if (activePeerConnections.size() < NUM_PEERS_IN_CHAIN) {
+            logger.info("Not enough peers to select from, returning all peers");
             return activePeerConnections.values().toArray(new PeerConnection[0]); // return all peers if not enough
         }
         PeerConnection[] selectedPeers = new PeerConnection[NUM_PEERS_IN_CHAIN];

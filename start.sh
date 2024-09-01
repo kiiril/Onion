@@ -1,0 +1,1 @@
+docker run -v $(pwd)/logs:/usr/src/myapp/logs -it onion

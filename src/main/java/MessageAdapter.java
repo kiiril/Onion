@@ -32,7 +32,6 @@ class MessageAdapter implements JsonSerializer<Message>, JsonDeserializer<Messag
             case DISCOVERY:
                 return context.deserialize(jsonObject, DiscoveryMessage.class);
             case SYMMETRIC_KEY_ESTABLISHMENT:
-                System.out.println("This case should work...");
                 return context.deserialize(jsonObject, SymmetricKeyEstablishmentMessage.class);
             default:
                 throw new JsonParseException("Unknown element type: " + type);

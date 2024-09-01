@@ -1,3 +1,6 @@
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import javax.crypto.SecretKey;
 import java.math.BigInteger;
 import java.net.InetAddress;
@@ -6,6 +9,8 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 public class Session {
+    private static final Logger logger = LogManager.getLogger();
+
     private final int sessionId;
     private PeerConnection[] selectedPeers;
     private SecretKey mySessionKey;
@@ -50,8 +55,9 @@ public class Session {
     public String encryptWithLayers(String text) {
         establishSessionKeys();
 
+        logger.info("Encrypting message with layers");
+
         String currentPayload = text;
-        System.out.println("Original message: " + currentPayload);
         // Perform multilayer encryption
         for (int i = selectedPeers.length - 1; i >= 0; i--) {
             PeerConnection peerConnection = selectedPeers[i];
@@ -63,12 +69,10 @@ public class Session {
 
                 // Create a new message with the current payload and routing info
                 Layer layerMessage = new Layer(currentPayload, nextPeer, previousPeer);
-                System.out.println("Layer message: " + layerMessage.getBody() + " with " + layerMessage.getNextPeer() + " and " + layerMessage.getPreviousPeer());
-
-                // Convert the entire layer message to JSON and encrypt it
+                logger.info("Layer: body={}, nextPeer={}, previousPeer={}", layerMessage.getBody(), layerMessage.getNextPeer(), layerMessage.getPreviousPeer());
                 String jsonLayerMessage = Util.messageToJson(layerMessage);
 
-                System.out.println("Encrypt message with " + peerConnection.getSessionKey(sessionId));
+                logger.info("Encrypt layer with sessionKey={}", peerConnection.getSessionKey(sessionId));
                 currentPayload = AES.encrypt(jsonLayerMessage, peerConnection.getSessionKey(sessionId));
             } catch (UnknownHostException e) {
                 System.out.println("Cannot get local host address: " + e);
@@ -78,16 +82,18 @@ public class Session {
     }
 
     public String decryptWithLayers(String encrypted) {
+        logger.info("Decrypting message with layers");
+
         String currentPayload = encrypted;
         // Perform multilayer decryption
         for (PeerConnection peerConnection : selectedPeers) {
             // Decrypt the current payload
+            logger.info("Decrypt layer with sessionKey={}", peerConnection.getSessionKey(sessionId));
             String decryptedPayload = AES.decrypt(currentPayload, peerConnection.getSessionKey(sessionId));
-            System.out.println("Decrypted message: " + decryptedPayload);
 
             // Convert the decrypted payload to a message object
             Layer layerMessage = (Layer) Util.jsonToMessage(decryptedPayload);
-            System.out.println("Layer message: " + layerMessage.getBody() + " with " + layerMessage.getNextPeer() + " and " + layerMessage.getPreviousPeer());
+            logger.info("Layer: body={}", layerMessage.getBody());
 
             // Update the current payload to the body of the message
             currentPayload = layerMessage.getBody();
@@ -97,6 +103,7 @@ public class Session {
     }
 
     private void establishSessionKeys() {
+        logger.info("Establishing and sending session keys to all peers in the chain");
         for (PeerConnection selectedPeer : selectedPeers) {
             BigInteger randomSecret = new BigInteger(2048, new SecureRandom());
             SecretKey sessionKey = AES.generateKey(randomSecret);

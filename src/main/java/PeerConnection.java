@@ -1,3 +1,6 @@
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
@@ -10,6 +13,8 @@ import java.util.Set;
 import java.util.concurrent.*;
 
 public class PeerConnection {
+    private static final Logger logger = LogManager.getLogger();
+
     // maybe can be removed
     private String ip;
     private final Socket connection;
@@ -40,7 +45,7 @@ public class PeerConnection {
     }
 
     public void sendMessage(String message) {
-        System.out.println("Sending message: " + message + "to " + getIp());
+        logger.info("Sending message: {} to {}", message, getIp());
         try {
             output.write(message);
             // needed! https://stackoverflow.com/questions/64249665/socket-is-closed-after-reading-from-its-inputstream\
@@ -54,7 +59,7 @@ public class PeerConnection {
 
     public void startReceivingMessages() {
         // create a new thread for receiving messages from the PeerConnection
-        System.out.println("Started to receive messages from peer: " + getIp());
+        logger.info("Starting to receive messages from peer: {}", getIp());
         receiverService.submit(new MessageReceiver());
     }
 
@@ -71,17 +76,17 @@ public class PeerConnection {
     }
 
     public void addSessionKey(int sessionId, SecretKey sessionKey) {
-        System.out.println("Add session key in PeerConnection for session " + sessionId + "with key: " + sessionKey);
+        logger.info("As sender save session key for {} with sessionId={} and sessionKey={}", getIp(), sessionId, sessionKey.toString());
         sessionKeys.put(sessionId, sessionKey);
     }
 
     public SecretKey getSessionKey(int sessionId) {
-        System.out.println("Get session key in PeerConnection for session " + sessionId + "with key: " + sessionKeys.get(sessionId));
+        logger.info("Get session key for {} with sessionId={} and sessionKey={}", getIp(), sessionId, sessionKeys.get(sessionId).toString());
         return sessionKeys.get(sessionId);
     }
 
     public void establishSharedSecret() {
-        System.out.println("Start establishing shared secret with " + getIp());
+        logger.info("Starting to establish shared secret with {}", getIp());
 
         // Send my DH public key
         String publicKey = DH.getPublicKey().toString();
@@ -89,12 +94,13 @@ public class PeerConnection {
         String jsonMessage = Util.messageToJson(message);
 
         sendMessage(jsonMessage);
-        System.out.println("Sent my public key to " + getIp());
+        logger.info("Sent my public key to {}", getIp());
 
         // Receive and handle peer's DH public key
         String receivedJsonMessage;
         try {
             receivedJsonMessage = input.readLine();
+            logger.info("Received public key from {}", getIp());
         } catch (IOException e) {
             System.out.println("Cannot receive the public key from another peer during key establishment" + e);
             return;
@@ -102,10 +108,10 @@ public class PeerConnection {
 
         SymmetricKeyEstablishmentMessage receivedMessage = (SymmetricKeyEstablishmentMessage) Util.jsonToMessage(receivedJsonMessage);
 
-        System.out.println("Received another peer's public key: " + receivedMessage.getBody());
+        logger.info("{} public key: {}", getIp(), receivedMessage.getBody());
 
         if (receivedMessage.getType() != MessageType.SYMMETRIC_KEY_ESTABLISHMENT) {
-            System.out.println("Unexpected message type during key establishment");
+            logger.warn("Unexpected message type during key establishment");
             return;
         }
 
@@ -113,7 +119,7 @@ public class PeerConnection {
         BigInteger sharedSecret = DH.getSharedSecret(otherPublicKey);
         setSymmetricKey(sharedSecret);
 
-        System.out.println("Symmetric key established with " + getIp());
+        logger.info("Symmetric key established with {}", getIp());
 
         startReceivingMessages();
     }
@@ -122,27 +128,29 @@ public class PeerConnection {
         // TODO identify protocol that the message ends, i.e. with a new line
         @Override
         public void run() {
-            System.out.println("Start receiving message in " + Thread.currentThread());
             String str;
             try {
                 while ((str = input.readLine()) != null) {
-                    System.out.println("Received message: \n" + str);
+                    logger.info("Received message: {}", str);
 
                     // Message is encrypted
                     String decryptedText;
                     decryptedText = AES.decrypt(str, symmetricKey);
 
+                    logger.info("Successfully decrypted outer layer");
+
                     Message receivedMessage = Util.jsonToMessage(decryptedText);
                     MessageType type = receivedMessage.getType();
 
                     if (type == MessageType.DISCOVERY) {
+                        logger.info("Received discovery message");
                         DiscoveryMessage discoveryMessage = (DiscoveryMessage) receivedMessage;
                         Set<String> possibleNewIps = Util.stringToSet(discoveryMessage.getBody());
-                        System.out.println("New possible peers: " + possibleNewIps);
+                        logger.info("New possible peers: {}", possibleNewIps);
 
                         for (String newIp : possibleNewIps) {
                             if (!connectionManager.getIps().contains(newIp) && !newIp.equals(InetAddress.getLocalHost().getHostAddress())) {
-                                System.out.println("I have a new peer: " + newIp);
+                                logger.info("New peer found: {}", newIp);
                                 try {
                                     PeerConnection peerConnection = new PeerConnection(new Socket(newIp, PeerConnectionManager.LISTEN_PORT), connectionManager);
 
@@ -157,64 +165,71 @@ public class PeerConnection {
                             }
                         }
                     } else if (type == MessageType.FORWARD_MESSAGE) {
-                        System.out.println("Received forward message");
+                        logger.info("Received forward message");
+
                         ForwardMessage forwardMessage = (ForwardMessage) receivedMessage;
 
                         Session session = connectionManager.getSession(forwardMessage.getSessionId());
-
                         String decryptedJsonMessage = AES.decrypt(forwardMessage.getBody(), session.getMySessionKey());
                         Layer decryptedMessage = (Layer) Util.jsonToMessage(decryptedJsonMessage);
-                        // get the message id and use session key for decryption
-                        System.out.println("Layer: " + decryptedMessage.getBody() + " with " + decryptedMessage.getNextPeer() + " and " + decryptedMessage.getPreviousPeer());
+
+                        logger.info("Successfully decrypted layer of encrypted message and get sessionId={}, previousPeer={}, nextPeer={}", forwardMessage.getSessionId(), decryptedMessage.getPreviousPeer(), decryptedMessage.getNextPeer());
 
                         String previousPeer = decryptedMessage.getPreviousPeer();
                         PeerConnection previousPeerConnection = connectionManager.getActivePeerConnections().get(previousPeer);
                         session.setPreviousPeer(previousPeerConnection);
+                        logger.info("Set previous peer {} for sessionId={}", previousPeerConnection.getIp(), forwardMessage.getSessionId());
 
                         String nextPeer = decryptedMessage.getNextPeer();
 
                         if (nextPeer == null) {
-                            System.out.println("This is the last peer in the chain with message: " + decryptedMessage.getBody());
+                            logger.info("I am the last peer in the chain with message: {}", decryptedMessage.getBody());
                             String response = connectionManager.makeRequest(decryptedMessage.getBody());
 
                             Layer layer = new Layer(response, null, null);
                             String jsonMessage = Util.messageToJson(layer);
                             String encryptedLayer = AES.encrypt(jsonMessage, session.getMySessionKey());
+                            logger.info("Encrypted response with the sessionKey={}", session.getMySessionKey());
+
                             BackwardMessage backwardMessage = new BackwardMessage(forwardMessage.getSessionId(), encryptedLayer);
                             String jsonBackwardMessage = Util.messageToJson(backwardMessage);
-
                             previousPeerConnection.sendMessage(AES.encrypt(jsonBackwardMessage, previousPeerConnection.getSymmetricKey()));
-                            System.out.println("Sent response to the previous peer");
+
+                            logger.info("Sent response to the previous peer in the chain");
                         } else {
-                            // forward the message to the next peer
+                            logger.info("Forward the message to the next peer in the chain");
+
                             ForwardMessage message = new ForwardMessage(forwardMessage.getSessionId(), decryptedMessage.getBody());
                             String jsonMessage = Util.messageToJson(message);
                             PeerConnection nextPeerConnection = connectionManager.getActivePeerConnections().get(nextPeer);
+
                             nextPeerConnection.sendMessage(AES.encrypt(jsonMessage, nextPeerConnection.getSymmetricKey()));
                         }
                     } else if (type == MessageType.BACKWARD_MESSAGE) {
-                        System.out.println("Received backward message");
+                        logger.info("Received backward message");
                         BackwardMessage backwardMessage = (BackwardMessage) receivedMessage;
 
                         Session session = connectionManager.getSession(backwardMessage.getSessionId());
                         if (session.isSendingPeer()) {
-                            System.out.println("I am the sending peer and I get the response! ");
+                            logger.info("I am the sender and I received the response");
                             String response = session.decryptWithLayers(backwardMessage.getBody());
-                            System.out.println("Final response: " + response);
+                            System.out.println("Decrypted response: " + response);
                         } else {
-                            System.out.println("I am not the sending peer and I need to forward the message");
+                            logger.info("I am not the sender and I need to forward the message");
                             Layer layer = new Layer(backwardMessage.getBody(), null, null);
                             String jsonMessage = Util.messageToJson(layer);
                             String encryptedLayer = AES.encrypt(jsonMessage, session.getMySessionKey());
+                            logger.info("Encrypted the message with my layer and sessionId={}, sessionKey={}", backwardMessage.getSessionId(), session.getMySessionKey());
 
                             BackwardMessage backwardMessageToSend = new BackwardMessage(backwardMessage.getSessionId(), encryptedLayer);
                             String jsonBackwardMessage = Util.messageToJson(backwardMessageToSend);
 
                             session.getPreviousPeer().sendMessage(AES.encrypt(jsonBackwardMessage, session.getPreviousPeer().getSymmetricKey()));
-                            System.out.println("Send the message to the previous peer");
+                            logger.info("Sent the message to the previous peer in the chain");
                         }
 
                     } else if (type == MessageType.SESSION_KEY_ESTABLISHMENT) {
+                        logger.info("Received session key establishment message");
                         SessionKeyEstablishmentMessage sessionKeyEstablishmentMessage = (SessionKeyEstablishmentMessage) receivedMessage;
 
                         int sessionId = sessionKeyEstablishmentMessage.getSessionId();
@@ -222,7 +237,7 @@ public class PeerConnection {
                         // save the session key in some storage
                         connectionManager.createSessionWithKey(sessionId, sessionKey);
                     } else {
-                        System.out.println("Unexpected message type");
+                        logger.warn("Unexpected message type");
                     }
                 }
             } catch (IOException e) {
