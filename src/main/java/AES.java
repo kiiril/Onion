@@ -39,8 +39,8 @@ public class AES {
             return Base64.getEncoder().encodeToString(encryptedWithIv);
         } catch (Exception e) {
             System.out.println("Cannot encrypt the message" + e);
-            return null;
         }
+        return null;
     }
 
     // Decrypt a message using AES in CBC mode

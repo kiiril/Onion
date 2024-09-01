@@ -1,8 +1,11 @@
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.util.Base64;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
 
@@ -17,6 +20,8 @@ public class PeerConnection {
     private BufferedWriter output;
     private final PeerConnectionManager connectionManager;
     private SecretKey symmetricKey;
+
+    private final Map<Integer, SecretKey> sessionKeys = new ConcurrentHashMap<>();
 
     // FIXME technically if send messages at the same time from more than 5 peers it will not receive all of them (for fixed thread pool)
     private final ExecutorService receiverService = Executors.newCachedThreadPool();
@@ -35,7 +40,7 @@ public class PeerConnection {
     }
 
     public void sendMessage(String message) {
-        System.out.println("Sending message: " + message);
+        System.out.println("Sending message: " + message + "to " + getIp());
         try {
             output.write(message);
             // needed! https://stackoverflow.com/questions/64249665/socket-is-closed-after-reading-from-its-inputstream\
@@ -43,6 +48,7 @@ public class PeerConnection {
             output.flush();
         } catch (IOException e) {
             System.out.println("Cannot send the message to output stream" + e);
+            // TODO retry to send the message
         }
     }
 
@@ -64,17 +70,29 @@ public class PeerConnection {
         return symmetricKey;
     }
 
+    public void addSessionKey(int sessionId, SecretKey sessionKey) {
+        System.out.println("Add session key in PeerConnection for session " + sessionId + "with key: " + sessionKey);
+        sessionKeys.put(sessionId, sessionKey);
+    }
+
+    public SecretKey getSessionKey(int sessionId) {
+        System.out.println("Get session key in PeerConnection for session " + sessionId + "with key: " + sessionKeys.get(sessionId));
+        return sessionKeys.get(sessionId);
+    }
+
     public void establishSharedSecret() {
         System.out.println("Start establishing shared secret with " + getIp());
 
         // Send my DH public key
         String publicKey = DH.getPublicKey().toString();
-        String jsonMessage = Util.messageToJson(MessageType.KEY_ESTABLISHMENT, publicKey);
+        SymmetricKeyEstablishmentMessage message = new SymmetricKeyEstablishmentMessage(publicKey);
+        String jsonMessage = Util.messageToJson(message);
+
         sendMessage(jsonMessage);
         System.out.println("Sent my public key to " + getIp());
 
         // Receive and handle peer's DH public key
-        String receivedJsonMessage = null; // FIXME this is a bad construction...
+        String receivedJsonMessage; // FIXME this is a bad construction...
         try {
             receivedJsonMessage = input.readLine();
         } catch (IOException e) {
@@ -82,10 +100,11 @@ public class PeerConnection {
             return;
         }
 
-        Message receivedMessage = Util.jsonToMessage(receivedJsonMessage);
+        SymmetricKeyEstablishmentMessage receivedMessage = (SymmetricKeyEstablishmentMessage) Util.jsonToMessage(receivedJsonMessage);
+
         System.out.println("Received another peer's public key: " + receivedMessage.getBody());
 
-        if (receivedMessage.getHeader() != MessageType.KEY_ESTABLISHMENT) {
+        if (receivedMessage.getType() != MessageType.SYMMETRIC_KEY_ESTABLISHMENT) {
             System.out.println("Unexpected message type during key establishment");
             return;
         }
@@ -99,7 +118,7 @@ public class PeerConnection {
         startReceivingMessages();
     }
 
-
+    // TODO: when you get the regular message then you need to save where it came from and wait until backpropagation
     private class MessageReceiver implements Runnable {
         // TODO identify protocol that the message ends, i.e. with a new line
         @Override
@@ -117,13 +136,12 @@ public class PeerConnection {
                     } catch (Exception e) { // fixme catch exceptions inside the decrypt method
                         throw new RuntimeException("Decryption problems");
                     }
-
                     Message receivedMessage = Util.jsonToMessage(decryptedText);
-                    MessageType type = receivedMessage.getHeader();
-                    System.out.println("Received message: " + type + " " + receivedMessage.getBody());
+                    MessageType type = receivedMessage.getType();
 
                     if (type == MessageType.DISCOVERY) {
-                        Set<String> possibleNewIps = Util.stringToSet(receivedMessage.getBody());
+                        DiscoveryMessage discoveryMessage = (DiscoveryMessage) receivedMessage;
+                        Set<String> possibleNewIps = Util.stringToSet(discoveryMessage.getBody());
                         System.out.println("New possible peers: " + possibleNewIps);
 
                         for (String newIp : possibleNewIps) {
@@ -143,13 +161,39 @@ public class PeerConnection {
                             }
                         }
                     } else if (type == MessageType.REGULAR) {
-                        System.out.println("Regular message: "  + receivedMessage.getBody());
-                    } else {
+                        System.out.println("Received regular message");
+                        RegularMessage regularMessage = (RegularMessage) receivedMessage;
+
+                        String decryptedJsonMessage = AES.decrypt(regularMessage.getBody(), connectionManager.getSessionKey(regularMessage.getSessionId()));
+                        RegularMessage decryptedMessage = (RegularMessage) Util.jsonToMessage(decryptedJsonMessage);
+                        // get the message id and use session key for decryption
+                        System.out.println("Regular message: " + decryptedMessage.getBody() + " with " + decryptedMessage.getNextPeer() + " and " + decryptedMessage.getPreviousPeer());
+
+                        String nextPeer = decryptedMessage.getNextPeer();
+                        if (nextPeer == null) {
+                            System.out.println("This is the last peer in the chain with message: " + decryptedMessage.getBody());
+                        } else {
+                            // forward the message to the next peer
+                            RegularMessage message = new RegularMessage(decryptedMessage.getSessionId(), decryptedMessage.getBody(), null, null);
+                            String jsonMessage = Util.messageToJson(message);
+                            PeerConnection nextPeerConnection = connectionManager.getActivePeerConnections().get(nextPeer);
+                            nextPeerConnection.sendMessage(AES.encrypt(jsonMessage, nextPeerConnection.getSymmetricKey()));
+                        }
+                    } else if (type == MessageType.SESSION_KEY_ESTABLISHMENT) {
+                        SessionKeyEstablishmentMessage sessionKeyEstablishmentMessage = (SessionKeyEstablishmentMessage) receivedMessage;
+
+                        int sessionId = sessionKeyEstablishmentMessage.getSessionId();
+                        SecretKey sessionKey = new SecretKeySpec(Base64.getDecoder().decode(sessionKeyEstablishmentMessage.getSessionKey()), "AES");
+                        // save the session key in some storage
+                        connectionManager.addSessionKey(sessionId, sessionKey);
+                    }else {
                         System.out.println("Unexpected message type");
                     }
                 }
             } catch (IOException e) {
                 System.out.println("Cannot receive the message from input stream" + e);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
             }
         }
     }

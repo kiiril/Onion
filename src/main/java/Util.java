@@ -1,13 +1,16 @@
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 import java.lang.reflect.Type;
 import java.util.Set;
 
 public class Util {
-    private static final Gson gson = new Gson();
-    public static String messageToJson(MessageType type, String msg) {
-        Message message = new Message(type, msg);
+    private static final Gson gson = new GsonBuilder()
+            .registerTypeAdapter(Message.class, new MessageAdapter())
+            .create();
+
+    public static String messageToJson(Message message) {
         return gson.toJson(message);
     }
 

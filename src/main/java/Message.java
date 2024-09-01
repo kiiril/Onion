@@ -1,17 +1,12 @@
-public class Message {
-    private MessageType header;
-    private String body;
 
-    public Message(MessageType header, String body) {
-        this.header = header;
-        this.body = body;
+public abstract class Message {
+    private final MessageType type;
+
+    public Message(MessageType type) {
+        this.type = type;
     }
 
-    public MessageType getHeader() {
-        return header;
-    }
-
-    public String getBody() {
-        return body;
+    public MessageType getType() {
+        return type;
     }
 }
