@@ -21,8 +21,12 @@ class MessageAdapter implements JsonSerializer<Message>, JsonDeserializer<Messag
         MessageType messageType = MessageType.valueOf(type);
 
         switch (messageType) {
-            case REGULAR:
-                return context.deserialize(jsonObject, RegularMessage.class);
+            case LAYER:
+                return context.deserialize(jsonObject, Layer.class);
+            case FORWARD_MESSAGE:
+                return context.deserialize(jsonObject, ForwardMessage.class);
+            case BACKWARD_MESSAGE:
+                return context.deserialize(jsonObject, BackwardMessage.class);
             case SESSION_KEY_ESTABLISHMENT:
                 return context.deserialize(jsonObject, SessionKeyEstablishmentMessage.class);
             case DISCOVERY:

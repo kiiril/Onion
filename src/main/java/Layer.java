@@ -1,19 +1,13 @@
-public class RegularMessage extends Message {
-    private final int sessionId;
+public class Layer extends Message {
     private final String body;
     private final String nextPeer;
     private final String previousPeer;
 
-    public RegularMessage(int sessionId, String body, String nextPeer, String previousPeer) {
-        super(MessageType.REGULAR);
-        this.sessionId = sessionId;
+    public Layer(String body, String nextPeer, String previousPeer) {
+        super(MessageType.LAYER);
         this.body = body;
         this.nextPeer = nextPeer;
         this.previousPeer = previousPeer;
-    }
-
-    public int getSessionId() {
-        return sessionId;
     }
 
     public String getBody() {

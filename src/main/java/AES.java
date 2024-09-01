@@ -44,18 +44,23 @@ public class AES {
     }
 
     // Decrypt a message using AES in CBC mode
-    public static String decrypt(String encryptedText, SecretKey key) throws Exception {
-        // Separate IV and encrypted message
-        byte[] encryptedWithIv = Base64.getDecoder().decode(encryptedText);
-        byte[] iv = Arrays.copyOfRange(encryptedWithIv, 0, 16);
-        byte[] encrypted = Arrays.copyOfRange(encryptedWithIv, 16, encryptedWithIv.length);
+    public static String decrypt(String encryptedText, SecretKey key) {
+        try {
+            // Separate IV and encrypted message
+            byte[] encryptedWithIv = Base64.getDecoder().decode(encryptedText);
+            byte[] iv = Arrays.copyOfRange(encryptedWithIv, 0, 16);
+            byte[] encrypted = Arrays.copyOfRange(encryptedWithIv, 16, encryptedWithIv.length);
 
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        IvParameterSpec ivSpec = new IvParameterSpec(iv);
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
 
-        cipher.init(Cipher.DECRYPT_MODE, key, ivSpec);
-        byte[] decrypted = cipher.doFinal(encrypted);
+            cipher.init(Cipher.DECRYPT_MODE, key, ivSpec);
+            byte[] decrypted = cipher.doFinal(encrypted);
 
-        return new String(decrypted, StandardCharsets.UTF_8);
+            return new String(decrypted, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            System.out.println("Cannot decrypt the message" + e);
+        }
+        return null;
     }
 }

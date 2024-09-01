@@ -92,7 +92,7 @@ public class PeerConnection {
         System.out.println("Sent my public key to " + getIp());
 
         // Receive and handle peer's DH public key
-        String receivedJsonMessage; // FIXME this is a bad construction...
+        String receivedJsonMessage;
         try {
             receivedJsonMessage = input.readLine();
         } catch (IOException e) {
@@ -118,7 +118,6 @@ public class PeerConnection {
         startReceivingMessages();
     }
 
-    // TODO: when you get the regular message then you need to save where it came from and wait until backpropagation
     private class MessageReceiver implements Runnable {
         // TODO identify protocol that the message ends, i.e. with a new line
         @Override
@@ -131,11 +130,8 @@ public class PeerConnection {
 
                     // Message is encrypted
                     String decryptedText;
-                    try {
-                        decryptedText = AES.decrypt(str, symmetricKey);
-                    } catch (Exception e) { // fixme catch exceptions inside the decrypt method
-                        throw new RuntimeException("Decryption problems");
-                    }
+                    decryptedText = AES.decrypt(str, symmetricKey);
+
                     Message receivedMessage = Util.jsonToMessage(decryptedText);
                     MessageType type = receivedMessage.getType();
 
@@ -160,33 +156,72 @@ public class PeerConnection {
                                 }
                             }
                         }
-                    } else if (type == MessageType.REGULAR) {
-                        System.out.println("Received regular message");
-                        RegularMessage regularMessage = (RegularMessage) receivedMessage;
+                    } else if (type == MessageType.FORWARD_MESSAGE) {
+                        System.out.println("Received forward message");
+                        ForwardMessage forwardMessage = (ForwardMessage) receivedMessage;
 
-                        String decryptedJsonMessage = AES.decrypt(regularMessage.getBody(), connectionManager.getSessionKey(regularMessage.getSessionId()));
-                        RegularMessage decryptedMessage = (RegularMessage) Util.jsonToMessage(decryptedJsonMessage);
+                        Session session = connectionManager.getSession(forwardMessage.getSessionId());
+
+                        String decryptedJsonMessage = AES.decrypt(forwardMessage.getBody(), session.getMySessionKey());
+                        Layer decryptedMessage = (Layer) Util.jsonToMessage(decryptedJsonMessage);
                         // get the message id and use session key for decryption
-                        System.out.println("Regular message: " + decryptedMessage.getBody() + " with " + decryptedMessage.getNextPeer() + " and " + decryptedMessage.getPreviousPeer());
+                        System.out.println("Layer: " + decryptedMessage.getBody() + " with " + decryptedMessage.getNextPeer() + " and " + decryptedMessage.getPreviousPeer());
+
+                        String previousPeer = decryptedMessage.getPreviousPeer();
+                        PeerConnection previousPeerConnection = connectionManager.getActivePeerConnections().get(previousPeer);
+                        session.setPreviousPeer(previousPeerConnection);
 
                         String nextPeer = decryptedMessage.getNextPeer();
+
                         if (nextPeer == null) {
                             System.out.println("This is the last peer in the chain with message: " + decryptedMessage.getBody());
+                            String response = connectionManager.makeRequest(decryptedMessage.getBody());
+
+                            Layer layer = new Layer(response, null, null);
+                            String jsonMessage = Util.messageToJson(layer);
+                            String encryptedLayer = AES.encrypt(jsonMessage, session.getMySessionKey());
+                            BackwardMessage backwardMessage = new BackwardMessage(forwardMessage.getSessionId(), encryptedLayer);
+                            String jsonBackwardMessage = Util.messageToJson(backwardMessage);
+
+                            previousPeerConnection.sendMessage(AES.encrypt(jsonBackwardMessage, previousPeerConnection.getSymmetricKey()));
+                            System.out.println("Sent response to the previous peer");
                         } else {
                             // forward the message to the next peer
-                            RegularMessage message = new RegularMessage(decryptedMessage.getSessionId(), decryptedMessage.getBody(), null, null);
+                            ForwardMessage message = new ForwardMessage(forwardMessage.getSessionId(), decryptedMessage.getBody());
                             String jsonMessage = Util.messageToJson(message);
                             PeerConnection nextPeerConnection = connectionManager.getActivePeerConnections().get(nextPeer);
                             nextPeerConnection.sendMessage(AES.encrypt(jsonMessage, nextPeerConnection.getSymmetricKey()));
                         }
+                    } else if (type == MessageType.BACKWARD_MESSAGE) {
+                        System.out.println("Received backward message");
+                        BackwardMessage backwardMessage = (BackwardMessage) receivedMessage;
+
+                        Session session = connectionManager.getSession(backwardMessage.getSessionId());
+                        if (session.isSendingPeer()) {
+                            System.out.println("I am the sending peer and I get the response! ");
+                            String response = session.decryptWithLayers(backwardMessage.getBody());
+                            System.out.println("Final response: " + response);
+                        } else {
+                            System.out.println("I am not the sending peer and I need to forward the message");
+                            Layer layer = new Layer(backwardMessage.getBody(), null, null);
+                            String jsonMessage = Util.messageToJson(layer);
+                            String encryptedLayer = AES.encrypt(jsonMessage, session.getMySessionKey());
+
+                            BackwardMessage backwardMessageToSend = new BackwardMessage(backwardMessage.getSessionId(), encryptedLayer);
+                            String jsonBackwardMessage = Util.messageToJson(backwardMessageToSend);
+
+                            session.getPreviousPeer().sendMessage(AES.encrypt(jsonBackwardMessage, session.getPreviousPeer().getSymmetricKey()));
+                            System.out.println("Send the message to the previous peer");
+                        }
+
                     } else if (type == MessageType.SESSION_KEY_ESTABLISHMENT) {
                         SessionKeyEstablishmentMessage sessionKeyEstablishmentMessage = (SessionKeyEstablishmentMessage) receivedMessage;
 
                         int sessionId = sessionKeyEstablishmentMessage.getSessionId();
                         SecretKey sessionKey = new SecretKeySpec(Base64.getDecoder().decode(sessionKeyEstablishmentMessage.getSessionKey()), "AES");
                         // save the session key in some storage
-                        connectionManager.addSessionKey(sessionId, sessionKey);
-                    }else {
+                        connectionManager.createSessionWithKey(sessionId, sessionKey);
+                    } else {
                         System.out.println("Unexpected message type");
                     }
                 }

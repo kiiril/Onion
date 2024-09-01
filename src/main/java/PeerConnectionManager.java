@@ -1,9 +1,7 @@
 import javax.crypto.SecretKey;
 import javax.net.ssl.HttpsURLConnection;
 import java.io.IOException;
-import java.math.BigInteger;
 import java.net.*;
-import java.security.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -16,7 +14,7 @@ public class PeerConnectionManager {
     private static final String BROADCASTER_IP = "172.17.0.2";
     private static final int NUM_PEERS_IN_CHAIN = 2;
 
-    private final Map<Integer, SecretKey> mySessionKeys = new ConcurrentHashMap<>();
+    private final List<Session> sessions = new ArrayList<>();
 
     private final ExecutorService connectionHandlingExecutor = Executors.newCachedThreadPool();
 
@@ -58,14 +56,17 @@ public class PeerConnectionManager {
         activePeerConnections.remove(peerId);
     }
 
-    public void addSessionKey(int sessionId, SecretKey sessionKey) {
+    public void createSessionWithKey(int sessionId, SecretKey sessionKey) {
         System.out.println("Add session key in PeerConnectionManager for session " + sessionId + "with key: " + sessionKey);
-        mySessionKeys.put(sessionId, sessionKey);
+        Session session = new Session(sessionId);
+        session.setMySessionKey(sessionKey);
+        sessions.add(session);
     }
 
-    public SecretKey getSessionKey(int sessionId) {
-        System.out.println("Get session key in PeerConnectionManager for session " + sessionId + "with key: " + mySessionKeys.get(sessionId));
-        return mySessionKeys.get(sessionId);
+    public Session getSession(int sessionId) {
+        Session session = sessions.stream().filter(s -> s.getSessionId() == sessionId).findFirst().orElse(null);
+        System.out.println("Get session key in PeerConnectionManager for session " + sessionId + "with key: " + session.getMySessionKey());
+        return session;
     }
 
     public void listenForConnections() {
@@ -121,9 +122,13 @@ public class PeerConnectionManager {
 
             PeerConnection[] selectedPeers = selectPeers(); // 2 peers
             System.out.println("Selected peers: " + Arrays.toString(selectedPeers));
-            int sessionId = (int) (Math.random() * Integer.MAX_VALUE); // fixme uniqueness?
 
-            String encryptedJson = encryptWithLayers(text, sessionId, selectedPeers);
+            int sessionId = (int) (Math.random() * Integer.MAX_VALUE); // fixme uniqueness?
+            Session session = new Session(sessionId);
+            session.setSelectedPeers(selectedPeers);
+            sessions.add(session);
+
+            String encryptedJson = session.encryptWithLayers(text);
 
             System.out.println("I know these guys: ");
             for (Map.Entry<String, PeerConnection> entry: activePeerConnections.entrySet()) {
@@ -134,7 +139,7 @@ public class PeerConnectionManager {
             else {
                 PeerConnection firstPeer = selectedPeers[0];
                 // No need for additional encryption here, as it's already done in the loop
-                firstPeer.sendMessage(AES.encrypt(Util.messageToJson(new RegularMessage(sessionId, encryptedJson, null, null)), firstPeer.getSymmetricKey()));
+                firstPeer.sendMessage(AES.encrypt(Util.messageToJson(new ForwardMessage(session.getSessionId(), encryptedJson)), firstPeer.getSymmetricKey()));
                 System.out.println("Message was sent.");
             }
         }
@@ -144,7 +149,7 @@ public class PeerConnectionManager {
         return activePeerConnections.keySet();
     }
 
-    private String makeRequest(String stringUrl) {
+    public String makeRequest(String stringUrl) {
         try {
             URL url = new URL(stringUrl);
             HttpURLConnection connection = (HttpsURLConnection) url.openConnection();
@@ -184,48 +189,6 @@ public class PeerConnectionManager {
             selectedPeers[i] = activePeerConnections.get(allPeers.get(i));
         }
         return selectedPeers;
-    }
-
-    private String encryptWithLayers(String text, int sessionId, PeerConnection[] selectedPeers) {
-        establishSessionKeys(sessionId , selectedPeers);
-
-        String currentPayload = text;
-        System.out.println("Original message: " + currentPayload);
-        // Perform multilayer encryption
-        for (int i = selectedPeers.length - 1; i >= 0; i--) {
-            PeerConnection peerConnection = selectedPeers[i];
-
-            // Prepare routing information
-            String nextPeer = (i < selectedPeers.length - 1) ? selectedPeers[i + 1].getIp() : null;
-            String previousPeer = (i > 0) ? selectedPeers[i - 1].getIp() : null; // change null to your IP
-
-            // Create a new message with the current payload and routing info
-            RegularMessage layerMessage = new RegularMessage(sessionId, currentPayload, nextPeer, previousPeer);
-            System.out.println("Layer message: " + layerMessage.getBody() + " with " + layerMessage.getNextPeer() + " and " + layerMessage.getPreviousPeer());
-
-            // Convert the entire layer message to JSON and encrypt it
-            String jsonLayerMessage = Util.messageToJson(layerMessage);
-
-            System.out.println("Encrypt message with " + peerConnection.getSessionKey(sessionId));
-            currentPayload = AES.encrypt(jsonLayerMessage, peerConnection.getSessionKey(sessionId));
-        }
-
-        return currentPayload;
-    }
-
-    // fixme can be parallelized
-    private void establishSessionKeys(int sessionId, PeerConnection[] selectedPeers) {
-        for (PeerConnection selectedPeer : selectedPeers) {
-            BigInteger randomSecret = new BigInteger(2048, new SecureRandom());
-            SecretKey sessionKey = AES.generateKey(randomSecret);
-
-            selectedPeer.addSessionKey(sessionId, sessionKey);
-
-            // Send the session key to all peers in the chain
-            SessionKeyEstablishmentMessage message = new SessionKeyEstablishmentMessage(sessionId, Base64.getEncoder().encodeToString(sessionKey.getEncoded()));
-            String jsonMessage = Util.messageToJson(message);
-            selectedPeer.sendMessage(AES.encrypt(jsonMessage, selectedPeer.getSymmetricKey()));
-        }
     }
 
     public Map<String, PeerConnection> getActivePeerConnections() {
