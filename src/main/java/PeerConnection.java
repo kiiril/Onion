@@ -16,7 +16,7 @@ public class PeerConnection {
     private static final Logger logger = LogManager.getLogger();
 
     // maybe can be removed
-    private String ip;
+    private final String ip;
     private final Socket connection;
 
     // reading data from connected peer
@@ -213,7 +213,14 @@ public class PeerConnection {
                         if (session.isSendingPeer()) {
                             logger.info("I am the sender and I received the response");
                             String response = session.decryptWithLayers(backwardMessage.getBody());
-                            System.out.println("Decrypted response: " + response);
+
+                            logger.info("Decrypted response: {}", response);
+
+                            try (FileWriter fileWriter = new FileWriter(String.format("output/%s-response.html", backwardMessage.getSessionId()), false)) {
+                                fileWriter.write(response);
+                            } catch (IOException e) {
+                                System.out.println("Cannot write the response to the file" + e);
+                            }
                         } else {
                             logger.info("I am not the sender and I need to forward the message");
                             Layer layer = new Layer(backwardMessage.getBody(), null, null);

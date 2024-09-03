@@ -2,7 +2,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import javax.crypto.SecretKey;
-import javax.net.ssl.HttpsURLConnection;
 import java.io.IOException;
 import java.net.*;
 import java.util.*;
@@ -154,13 +153,15 @@ public class PeerConnectionManager {
     }
 
     public String makeRequest(String stringUrl) {
+        logger.info("Making request to: {}", stringUrl);
         try {
             URL url = new URL(stringUrl);
-            HttpURLConnection connection = (HttpsURLConnection) url.openConnection();
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
 
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
+                logger.info("Status code is OK");
                 Scanner scanner = new Scanner(connection.getInputStream());
                 StringBuilder response = new StringBuilder();
                 while (scanner.hasNextLine()) {
@@ -169,7 +170,7 @@ public class PeerConnectionManager {
                 scanner.close();
                 return response.toString();
             } else {
-                logger.info("Cannot get response from URL: {}", stringUrl);
+                logger.warn("Cannot get response from URL: {}", stringUrl);
                 return "";
             }
         } catch (MalformedURLException e) {

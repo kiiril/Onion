@@ -6,7 +6,6 @@ class MessageAdapter implements JsonSerializer<Message>, JsonDeserializer<Messag
     public JsonElement serialize(Message src, Type typeOfSrc, JsonSerializationContext context) {
         JsonObject result = new JsonObject();
         result.addProperty("type", src.getType().name());
-        // Serializing the object itself into the "data" field
         JsonObject data = context.serialize(src, src.getClass()).getAsJsonObject();
         result.add("data", data);
         return result;
