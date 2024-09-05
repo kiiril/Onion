@@ -1,3 +1,5 @@
+package com.github.kiiril;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import java.net.InetAddress;

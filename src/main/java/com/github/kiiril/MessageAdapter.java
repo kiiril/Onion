@@ -1,3 +1,6 @@
+package com.github.kiiril;
+
+import com.github.kiiril.messages.*;
 import com.google.gson.*;
 import java.lang.reflect.Type;
 

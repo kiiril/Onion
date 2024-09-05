@@ -1,9 +1,13 @@
-public class ForwardMessage extends Message {
+package com.github.kiiril.messages;
+
+import com.github.kiiril.MessageType;
+
+public class BackwardMessage extends Message {
     private final int sessionId;
     private final String body;
 
-    public ForwardMessage(int sessionId, String body) {
-        super(MessageType.FORWARD_MESSAGE);
+    public BackwardMessage(int sessionId, String body) {
+        super(MessageType.BACKWARD_MESSAGE);
         this.sessionId = sessionId;
         this.body = body;
     }

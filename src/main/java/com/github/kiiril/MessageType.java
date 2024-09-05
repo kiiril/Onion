@@ -1,3 +1,5 @@
+package com.github.kiiril;
+
 public enum MessageType {
     SYMMETRIC_KEY_ESTABLISHMENT,
     SESSION_KEY_ESTABLISHMENT,

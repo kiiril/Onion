@@ -1,3 +1,5 @@
+package com.github.kiiril;
+
 import javax.crypto.*;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -10,14 +12,15 @@ import java.util.Base64;
 public class AES {
     // Generate a 256-bit AES key from a shared secret
     public static SecretKey generateKey(BigInteger sharedSecret) {
-        MessageDigest sha256 = null;
+        MessageDigest sha256;
         try {
             sha256 = MessageDigest.getInstance("SHA-256");
+            byte[] key = sha256.digest(sharedSecret.toByteArray());
+            return new SecretKeySpec(Arrays.copyOf(key, 32), "AES");
         } catch (NoSuchAlgorithmException e) {
             System.out.println("Cannot find SHA-256 algorithm" + e);
         }
-        byte[] key = sha256.digest(sharedSecret.toByteArray());
-        return new SecretKeySpec(Arrays.copyOf(key, 32), "AES");
+        return null;
     }
 
     // Encrypt a message using AES in CBC mode

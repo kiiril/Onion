@@ -1,3 +1,7 @@
+package com.github.kiiril.messages;
+
+import com.github.kiiril.MessageType;
+
 public class SessionKeyEstablishmentMessage extends Message {
     private final int sessionId;
     private final String sessionKey;

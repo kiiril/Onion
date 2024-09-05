@@ -1,8 +1,9 @@
+package com.github.kiiril;
+
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public class DH {
-
     // Diffie-Hellman parameters (specified in RFC 3526 2048-bit MODP Group)
     private static final BigInteger p = new BigInteger("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
             "29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
@@ -31,7 +32,8 @@ public class DH {
         return publicKey;
     }
 
-    public static BigInteger getSharedSecret(BigInteger otherPublicKey) {
+    public static BigInteger generateSharedSecret(BigInteger otherPublicKey) {
+        // Generate shared secret (otherPublicKey^privateKey mod p)
         return otherPublicKey.modPow(privateKey, p);
     }
 }

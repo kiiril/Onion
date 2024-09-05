@@ -1,3 +1,7 @@
+package com.github.kiiril.messages;
+
+import com.github.kiiril.MessageType;
+
 public class SymmetricKeyEstablishmentMessage extends Message {
     private final String body;
 
