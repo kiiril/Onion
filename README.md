@@ -17,3 +17,7 @@ Onion routing is a technique for enabling anonymous communication over a compute
 In the root directory `output` folder will be created where you can find .html file with the response from the server. Response contains the ip address from which the request was sent.
 
 `logs` folder contains logs of each peer and can be inspected to see the path of the request.
+
+## Implementation
+
+You can find implementation details in `DETAILS.pdf`
